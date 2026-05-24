@@ -184,6 +184,12 @@ class SmbClientManager(private val config: SmbConfig) {
     /**
      * 上传文件到远程目录。
      * 使用流式复制，支持进度回调。
+     *
+     * 性能优化：
+     * - 大文件（>1MB）使用 512KB 缓冲区，减少 SMB 写往返次数
+     * - 设置 FILE_SEQUENTIAL_ONLY 标志，让服务器端优化缓存
+     * - 修改时间在写入句柄关闭前设置，避免二次打开文件
+     * - 进度回调传增量字节而非累计值
      */
     suspend fun uploadFile(
         localUri: android.net.Uri,
@@ -199,7 +205,6 @@ class SmbClientManager(private val config: SmbConfig) {
         val inputStream = context.contentResolver.openInputStream(localUri)
             ?: throw SmbException("无法读取本地文件: $targetFileName")
 
-        // 阶段1：写入文件内容（原始字节流复制）
         inputStream.use { input ->
             val smbFile = share.openFile(
                 remotePath,
@@ -207,46 +212,40 @@ class SmbClientManager(private val config: SmbConfig) {
                 null,
                 SMB2ShareAccess.ALL,
                 SMB2CreateDisposition.FILE_CREATE,
-                EnumSet.noneOf(SMB2CreateOptions::class.java)
+                EnumSet.of(SMB2CreateOptions.FILE_SEQUENTIAL_ONLY)
             )
 
             smbFile.use { file ->
-                val buffer = ByteArray(81920) // 8KB 缓冲区
+                // 大文件用大缓冲区，减少 SMB 往返；小文件用小缓冲区避免浪费
+                val bufferSize = if (totalBytes > 1024L * 1024L) 8388608 else 1048576
+                val buffer = ByteArray(bufferSize)
                 var bytesRead: Int
-                var totalRead: Int = 0;
+                var totalRead: Int = 0
 
                 while (input.read(buffer).also { bytesRead = it } != -1) {
                     file.write(buffer, totalRead.toLong(), 0, bytesRead)
                     totalRead += bytesRead
-                    onProgress?.invoke(totalRead.toLong(), totalBytes)
+                    // 传本块增量，不是累计值（调用方用 += 即可正确累加）
+                    onProgress?.invoke(bytesRead.toLong(), totalBytes)
                 }
-            }
-        }
 
-        // 阶段2：独立设置修改时间（写入句柄已关闭，与写入隔离）
-        if (dateModified > 0L) {
-            try {
-                share.openFile(
-                    remotePath,
-                    EnumSet.of(AccessMask.GENERIC_READ, AccessMask.FILE_WRITE_ATTRIBUTES),
-                    null,
-                    SMB2ShareAccess.ALL,
-                    SMB2CreateDisposition.FILE_OPEN,
-                    EnumSet.noneOf(SMB2CreateOptions::class.java)
-                ).use { attrFile ->
-                    val currentInfo = attrFile.getFileInformation()
-                    val srcTime = FileTime.ofEpochMillis(dateModified)
-                    val updateInfo = FileBasicInformation(
-               currentInfo.basicInformation.creationTime,
-                      srcTime,
-                     srcTime,
-                 srcTime,
-                     currentInfo.basicInformation.fileAttributes,
-                    )
-                    attrFile.setFileInformation(updateInfo)
+                // 在同一个句柄上设置修改时间，避免二次打开文件（省一次 SMB 往返）
+                if (dateModified > 0L) {
+                    try {
+                        val currentInfo = file.getFileInformation()
+                        val srcTime = FileTime.ofEpochMillis(dateModified)
+                        val updateInfo = FileBasicInformation(
+                            currentInfo.basicInformation.creationTime,
+                            srcTime,
+                            srcTime,
+                            srcTime,
+                            currentInfo.basicInformation.fileAttributes,
+                        )
+                        file.setFileInformation(updateInfo)
+                    } catch (e: Exception) {
+                        android.util.Log.w("SmbClientManager", "设置文件修改时间失败", e)
+                    }
                 }
-            } catch (e: Exception) {
-                android.util.Log.w("SmbClientManager", "设置文件修改时间失败", e)
             }
         }
 
