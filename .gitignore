@@ -1,0 +1,27 @@
+# Android / Gradle
+.gradle/
+build/
+app/build/
+*.apk
+*.aab
+*.ap_
+*.dex
+local.properties
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.DS_Store
+
+# Kotlin
+*.class
+
+# NDK / CMake
+.cxx/
+*.cxx
+
+# Auto-generated
+*.log
+*.tmp

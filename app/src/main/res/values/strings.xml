@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CopyBack</string>
+    <string name="backup_complete">备份完成</string>
+    <string name="backup_failed">备份失败</string>
+    <string name="scanning">扫描中...</string>
+    <string name="uploading">上传中...</string>
+</resources>
