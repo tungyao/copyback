@@ -208,7 +208,7 @@ class SmbClientManager(private val config: SmbConfig) {
         inputStream.use { input ->
             val smbFile = share.openFile(
                 remotePath,
-                EnumSet.of(AccessMask.GENERIC_WRITE),
+                EnumSet.of(AccessMask.GENERIC_WRITE, AccessMask.GENERIC_READ),
                 null,
                 SMB2ShareAccess.ALL,
                 SMB2CreateDisposition.FILE_CREATE,
@@ -325,6 +325,8 @@ class SmbClientManager(private val config: SmbConfig) {
     private fun buildSmbjConfig(): SmbjConfig {
         return SmbjConfig.builder()
             .withTimeout(config.connectionTimeoutMs, TimeUnit.MILLISECONDS)
+            .withReadBufferSize(8388608)
+            .withWriteBufferSize(8388608)
             .withSoTimeout(config.readTimeoutMs.toInt().coerceAtMost(Int.MAX_VALUE).toLong(), TimeUnit.MILLISECONDS)
             .build()
     }
